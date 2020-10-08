@@ -1,12 +1,10 @@
-// Copyright 2019 The Chromium Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
-
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'consumable_store.dart';
+import 'package:http/http.dart' as http; // for http request
 
 void main() {
   /// アプリ内課金を初期化し、有効にします
@@ -17,6 +15,7 @@ void main() {
 const bool kAutoConsume = true;
 
 // とりあえずAndroidのテスト用Product IDを使用
+// リリース時には、登録した課金アイテムのIDと変更してください
 const String _kConsumableId = 'android.test.purchased';
 const List<String> _kProductIds = <String>[
   'android.test.purchased',
@@ -103,6 +102,42 @@ class _MyAppState extends State<MyApp> {
         }
       }
     }
+  }
+
+  /// Android レシートチェック処理
+  Future<bool> _verifyPurchaseAndroid(PurchaseDetails purchaseDetails) async {
+    // 消耗型アイテムの処理 - レシートデータをBase64エンコードする
+    final base64Receipt = base64.encode(
+        utf8.encode(purchaseDetails.verificationData.localVerificationData));
+
+    // サーバーサイドで購入情報を管理する際には、Androidではレシート情報をbase64エンコードし送信します
+    final receiptData = json.encode({
+      'signature': purchaseDetails.billingClientPurchase.signature,
+      'receipt': base64Receipt,
+    });
+
+    /// `RECEIPT_VERIFICATION_ENDPOINT_FOR_ANDROID`にはCloudFunctionsのエンドポイントが設定されている想定です。
+    /// 双方のデータをレシート検証用エンドポイントに送信し、ステータスコード200が返却されれば検証は完了です。
+    /// 200以外のステータスコードを受信した場合、`catch`にて補足され即座に`false`が返却されます。
+    final response = await http.post(
+      'end point for server side',
+      body: receiptData,
+    );
+
+    /// 以下はレシート検証が正常に完了した場合の実装サンプルです。
+    /// isAutoRenewing = true の場合、定期購読タイプのアイテムであると判定出来ます。
+    final typeOfSubscription =
+        purchaseDetails.billingClientPurchase.isAutoRenewing;
+    if (typeOfSubscription) {
+      /// 定期購読タイプのアイテムの場合の処理
+    } else {
+      /// 非消費型、または消費型アイテムの場合の処理
+    }
+
+    if (response == null) {
+      return false;
+    }
+    return true;
   }
 
   @override
