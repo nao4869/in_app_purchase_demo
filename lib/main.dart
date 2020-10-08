@@ -9,22 +9,16 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'consumable_store.dart';
 
 void main() {
-  // For play billing library 2.0 on Android, it is mandatory to call
-  // [enablePendingPurchases](https://developer.android.com/reference/com/android/billingclient/api/BillingClient.Builder.html#enablependingpurchases)
-  // as part of initializing the app.
+  /// アプリ内課金を初期化し、有効にします
   InAppPurchaseConnection.enablePendingPurchases();
   runApp(MyApp());
 }
 
 const bool kAutoConsume = true;
 
-// とりあえずAndroidのProduct IDを使用
-const String _kConsumableId = 'android.test.purchased';
-const List<String> _kProductIds = <String>[
-  _kConsumableId,
-  'upgrade',
-  'subscription'
-];
+// とりあえずAndroidのテスト用Product IDを使用
+const String _kConsumableId = 'remove_ads';
+const List<String> _kProductIds = <String>['remove_ads'];
 
 class MyApp extends StatefulWidget {
   @override
@@ -54,7 +48,9 @@ class _MyAppState extends State<MyApp> {
     }, onError: (error) {
       // handle error here.
     });
-    initStoreInfo();
+
+    /// 本番環境で登録したプロダクトIDに変更してください
+    initStoreInfo(_kProductIds);
     super.initState();
   }
 
@@ -64,44 +60,37 @@ class _MyAppState extends State<MyApp> {
     super.dispose();
   }
 
-  Future<void> initStoreInfo() async {
-    final bool isAvailable = await _connection.isAvailable();
+  Future<void> initStoreInfo(
+    List<String> productIds,
+  ) async {
+    // アプリ内課金の有効性を確認
+    _isAvailable = await _connection.isAvailable();
 
+    // アプリ内課金が有効のときのみ以下を処理
     if (_isAvailable) {
-      ProductDetailsResponse productDetailResponse =
-      await _connection.queryProductDetails(_kProductIds.toSet());
+      // 販売中プロダクトIDの確定
+      final ids = Set<String>.from(productIds);
+
+      // Storeに有効なアイテムを問い合わせる
+      final productDetailResponse = await _connection.queryProductDetails(ids);
+
+      // 一応異常系の場合はログに出力しておく
       if (productDetailResponse.error != null) {
-        setState(() {
-          _queryProductError = productDetailResponse.error.message;
-          _isAvailable = isAvailable;
-          _products = productDetailResponse.productDetails;
-          _purchases = [];
-          _notFoundIds = productDetailResponse.notFoundIDs;
-          _consumables = [];
-          _purchasePending = false;
-          _loading = false;
-        });
-        return;
+        debugPrint(
+            'productDetailResponse error!!  cause:${productDetailResponse.error.message}');
+      }
+      if (productDetailResponse.productDetails.isEmpty) {
+        debugPrint('productDetailResponse empty!!');
       }
 
-      if (productDetailResponse.productDetails.isEmpty) {
-        setState(() {
-          _queryProductError = null;
-          _isAvailable = isAvailable;
-          _products = productDetailResponse.productDetails;
-          _purchases = [];
-          _notFoundIds = productDetailResponse.notFoundIDs;
-          _consumables = [];
-          _purchasePending = false;
-          _loading = false;
-        });
-        return;
-      }
+      // ストア確認後の課金アイテム情報を保持する
+      _products = productDetailResponse.productDetails;
 
       final QueryPurchaseDetailsResponse purchaseResponse =
-      await _connection.queryPastPurchases();
+          await _connection.queryPastPurchases();
       if (purchaseResponse.error != null) {
-        // handle query past purchase error..
+        debugPrint(
+            'There is an error when querying past purchase response, cause are ${purchaseResponse.error.message}');
       }
       final List<PurchaseDetails> verifiedPurchases = [];
       for (PurchaseDetails purchase in purchaseResponse.pastPurchases) {
@@ -204,18 +193,15 @@ class _MyAppState extends State<MyApp> {
               'This app needs special configuration to run. Please see example/README.md for instructions.')));
     }
 
-    // This loading previous purchases code is just a demo. Please do not use this as it is.
-    // In your app you should always verify the purchase data using the `verificationData` inside the [PurchaseDetails] object before trusting it.
-    // We recommend that you use your own server to verity the purchase data.
     Map<String, PurchaseDetails> purchases =
-    Map.fromEntries(_purchases.map((PurchaseDetails purchase) {
+        Map.fromEntries(_purchases.map((PurchaseDetails purchase) {
       if (purchase.pendingCompletePurchase) {
         InAppPurchaseConnection.instance.completePurchase(purchase);
       }
       return MapEntry<String, PurchaseDetails>(purchase.productID, purchase);
     }));
     productList.addAll(_products.map(
-          (ProductDetails productDetails) {
+      (ProductDetails productDetails) {
         PurchaseDetails previousPurchase = purchases[productDetails.id];
         return ListTile(
             title: Text(
@@ -227,30 +213,30 @@ class _MyAppState extends State<MyApp> {
             trailing: previousPurchase != null
                 ? Icon(Icons.check)
                 : FlatButton(
-              child: Text(productDetails.price),
-              color: Colors.green[800],
-              textColor: Colors.white,
-              onPressed: () {
-                PurchaseParam purchaseParam = PurchaseParam(
-                    productDetails: productDetails,
-                    applicationUserName: null,
-                    sandboxTesting: true);
-                if (productDetails.id == _kConsumableId) {
-                  _connection.buyConsumable(
-                      purchaseParam: purchaseParam,
-                      autoConsume: kAutoConsume || Platform.isIOS);
-                } else {
-                  _connection.buyNonConsumable(
-                      purchaseParam: purchaseParam);
-                }
-              },
-            ));
+                    child: Text(productDetails.price),
+                    color: Colors.green[800],
+                    textColor: Colors.white,
+                    onPressed: () {
+                      PurchaseParam purchaseParam = PurchaseParam(
+                          productDetails: productDetails,
+                          applicationUserName: null,
+                          sandboxTesting: true);
+                      if (productDetails.id == _kConsumableId) {
+                        _connection.buyConsumable(
+                            purchaseParam: purchaseParam,
+                            autoConsume: kAutoConsume || Platform.isIOS);
+                      } else {
+                        _connection.buyNonConsumable(
+                            purchaseParam: purchaseParam);
+                      }
+                    },
+                  ));
       },
     ));
 
     return Card(
         child:
-        Column(children: <Widget>[productHeader, Divider()] + productList));
+            Column(children: <Widget>[productHeader, Divider()] + productList));
   }
 
   Card _buildConsumableBox() {
@@ -264,7 +250,7 @@ class _MyAppState extends State<MyApp> {
       return Card();
     }
     final ListTile consumableHeader =
-    ListTile(title: Text('Purchased consumables'));
+        ListTile(title: Text('Purchased consumables'));
     final List<Widget> tokens = _consumables.map((String id) {
       return GridTile(
         child: IconButton(
@@ -280,15 +266,15 @@ class _MyAppState extends State<MyApp> {
     }).toList();
     return Card(
         child: Column(children: <Widget>[
-          consumableHeader,
-          Divider(),
-          GridView.count(
-            crossAxisCount: 5,
-            children: tokens,
-            shrinkWrap: true,
-            padding: EdgeInsets.all(16.0),
-          )
-        ]));
+      consumableHeader,
+      Divider(),
+      GridView.count(
+        crossAxisCount: 5,
+        children: tokens,
+        shrinkWrap: true,
+        padding: EdgeInsets.all(16.0),
+      )
+    ]));
   }
 
   Future<void> consume(String id) async {
