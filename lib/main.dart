@@ -17,8 +17,10 @@ void main() {
 const bool kAutoConsume = true;
 
 // とりあえずAndroidのテスト用Product IDを使用
-const String _kConsumableId = 'remove_ads';
-const List<String> _kProductIds = <String>['remove_ads'];
+const String _kConsumableId = 'android.test.purchased';
+const List<String> _kProductIds = <String>[
+  'android.test.purchased',
+];
 
 class MyApp extends StatefulWidget {
   @override
@@ -84,7 +86,9 @@ class _MyAppState extends State<MyApp> {
       }
 
       // ストア確認後の課金アイテム情報を保持する
+      // プロダクトを取得した後、_loadingをfalseにします
       _products = productDetailResponse.productDetails;
+      _loading = false;
 
       final QueryPurchaseDetailsResponse purchaseResponse =
           await _connection.queryPastPurchases();
@@ -160,15 +164,17 @@ class _MyAppState extends State<MyApp> {
     final List<Widget> children = <Widget>[storeHeader];
 
     if (!_isAvailable) {
-      children.addAll([
-        Divider(),
-        ListTile(
-          title: Text('Not connected',
-              style: TextStyle(color: ThemeData.light().errorColor)),
-          subtitle: const Text(
-              'Unable to connect to the payments processor. Has this app been configured correctly? See the example README for instructions.'),
-        ),
-      ]);
+      children.addAll(
+        [
+          Divider(),
+          ListTile(
+            title: Text('Not connected',
+                style: TextStyle(color: ThemeData.light().errorColor)),
+            subtitle: const Text(
+                'Unable to connect to the payments processor. Has this app been configured correctly? See the example README for instructions.'),
+          ),
+        ],
+      );
     }
     return Card(child: Column(children: children));
   }
@@ -176,9 +182,11 @@ class _MyAppState extends State<MyApp> {
   Card _buildProductList() {
     if (_loading) {
       return Card(
-          child: (ListTile(
-              leading: CircularProgressIndicator(),
-              title: Text('Fetching products...'))));
+        child: ListTile(
+          leading: CircularProgressIndicator(),
+          title: Text('Fetching products...'),
+        ),
+      );
     }
     if (!_isAvailable) {
       return Card();
@@ -186,24 +194,35 @@ class _MyAppState extends State<MyApp> {
     final ListTile productHeader = ListTile(title: Text('Products for Sale'));
     List<ListTile> productList = <ListTile>[];
     if (_notFoundIds.isNotEmpty) {
-      productList.add(ListTile(
-          title: Text('[${_notFoundIds.join(", ")}] not found',
-              style: TextStyle(color: ThemeData.light().errorColor)),
+      productList.add(
+        ListTile(
+          title: Text(
+            '[${_notFoundIds.join(", ")}] not found',
+            style: TextStyle(color: ThemeData.light().errorColor),
+          ),
           subtitle: Text(
-              'This app needs special configuration to run. Please see example/README.md for instructions.')));
+              'This app needs special configuration to run. Please see example/README.md for instructions.'),
+        ),
+      );
     }
 
-    Map<String, PurchaseDetails> purchases =
-        Map.fromEntries(_purchases.map((PurchaseDetails purchase) {
-      if (purchase.pendingCompletePurchase) {
-        InAppPurchaseConnection.instance.completePurchase(purchase);
-      }
-      return MapEntry<String, PurchaseDetails>(purchase.productID, purchase);
-    }));
-    productList.addAll(_products.map(
-      (ProductDetails productDetails) {
-        PurchaseDetails previousPurchase = purchases[productDetails.id];
-        return ListTile(
+    Map<String, PurchaseDetails> purchases = Map.fromEntries(
+      _purchases.map(
+        (PurchaseDetails purchase) {
+          if (purchase.pendingCompletePurchase) {
+            InAppPurchaseConnection.instance.completePurchase(purchase);
+          }
+          return MapEntry<String, PurchaseDetails>(
+              purchase.productID, purchase);
+        },
+      ),
+    );
+
+    productList.addAll(
+      _products.map(
+        (ProductDetails productDetails) {
+          PurchaseDetails previousPurchase = purchases[productDetails.id];
+          return ListTile(
             title: Text(
               productDetails.title,
             ),
@@ -230,21 +249,27 @@ class _MyAppState extends State<MyApp> {
                             purchaseParam: purchaseParam);
                       }
                     },
-                  ));
-      },
-    ));
+                  ),
+          );
+        },
+      ),
+    );
 
     return Card(
-        child:
-            Column(children: <Widget>[productHeader, Divider()] + productList));
+      child: Column(
+        children: <Widget>[productHeader, Divider()] + productList,
+      ),
+    );
   }
 
   Card _buildConsumableBox() {
     if (_loading) {
       return Card(
-          child: (ListTile(
-              leading: CircularProgressIndicator(),
-              title: Text('Fetching consumables...'))));
+        child: ListTile(
+          leading: CircularProgressIndicator(),
+          title: Text('Fetching consumables...'),
+        ),
+      );
     }
     if (!_isAvailable || _notFoundIds.contains(_kConsumableId)) {
       return Card();
@@ -265,16 +290,19 @@ class _MyAppState extends State<MyApp> {
       );
     }).toList();
     return Card(
-        child: Column(children: <Widget>[
-      consumableHeader,
-      Divider(),
-      GridView.count(
-        crossAxisCount: 5,
-        children: tokens,
-        shrinkWrap: true,
-        padding: EdgeInsets.all(16.0),
-      )
-    ]));
+      child: Column(
+        children: <Widget>[
+          consumableHeader,
+          Divider(),
+          GridView.count(
+            crossAxisCount: 5,
+            children: tokens,
+            shrinkWrap: true,
+            padding: EdgeInsets.all(16.0),
+          )
+        ],
+      ),
+    );
   }
 
   Future<void> consume(String id) async {
