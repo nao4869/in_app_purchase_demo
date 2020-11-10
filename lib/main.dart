@@ -89,6 +89,8 @@ class _MyAppState extends State<MyApp> {
       _products = productDetailResponse.productDetails;
       _loading = false;
 
+      // 購入済みのプロダクト一覧を取得します
+      // レシートの取得などは行われない為、必要であれば、別途pendingPurchaseCheckなどにて取得してください
       final QueryPurchaseDetailsResponse purchaseResponse =
           await _connection.queryPastPurchases();
       if (purchaseResponse.error != null) {
@@ -102,6 +104,20 @@ class _MyAppState extends State<MyApp> {
         }
       }
     }
+  }
+
+  Future<bool> _verifyPurchase(PurchaseDetails purchaseDetails) async {
+    var result = false;
+    if (Platform.isAndroid) {
+      /// ダイアログを表示する処理
+      result = await _verifyPurchaseAndroid(purchaseDetails);
+    } else {
+      /// ダイアログを表示する処理
+      result = await _verifyPurchaseIos(purchaseDetails);
+    }
+
+    /// ダイアログを閉じる処理
+    return result;
   }
 
   /// Android レシートチェック処理
@@ -135,6 +151,51 @@ class _MyAppState extends State<MyApp> {
     }
 
     if (response == null) {
+      return false;
+    }
+    return true;
+  }
+
+  /// iOS課金処理（レシートチェック）APIを送信します。
+  Future<bool> _verifyPurchaseIos(PurchaseDetails purchaseDetails) async {
+    try {
+      // サブスクアイテムの処理
+      if (purchaseDetails.productID.contains('sbsc')) {
+        // サーバーサイドで購入情報を管理する際には、iOSもAndroidと同様に、base64Encodeをしていきましょう
+        final receiptData = json.encode({
+          'receipt': purchaseDetails.verificationData.localVerificationData,
+        });
+
+        /// `RECEIPT_VERIFICATION_ENDPOINT_FOR_ANDROID`にはCloudFunctionsのエンドポイントが設定されている想定です。
+        /// 双方のデータをレシート検証用エンドポイントに送信し、ステータスコード200が返却されれば検証は完了です。
+        /// 200以外のステータスコードを受信した場合、`catch`にて補足され即座に`false`が返却されます。
+        final response = await http.post(
+          'end point for server side',
+          body: receiptData,
+        );
+
+        if (response == null) {
+          return false;
+        }
+      } else {
+        // サーバーサイドで購入情報を管理する際には、iOSもAndroidと同様に、base64Encodeをしていきましょう
+        final receiptData = json.encode({
+          'receipt': purchaseDetails.verificationData.localVerificationData,
+        });
+
+        /// `RECEIPT_VERIFICATION_ENDPOINT_FOR_ANDROID`にはCloudFunctionsのエンドポイントが設定されている想定です。
+        /// 双方のデータをレシート検証用エンドポイントに送信し、ステータスコード200が返却されれば検証は完了です。
+        /// 200以外のステータスコードを受信した場合、`catch`にて補足され即座に`false`が返却されます。
+        final response = await http.post(
+          'end point for server side',
+          body: receiptData,
+        );
+
+        if (response == null) {
+          return false;
+        }
+      }
+    } catch (e) {
       return false;
     }
     return true;
@@ -377,43 +438,192 @@ class _MyAppState extends State<MyApp> {
     });
   }
 
-  Future<bool> _verifyPurchase(PurchaseDetails purchaseDetails) {
-    // IMPORTANT!! Always verify a purchase before delivering the product.
-    // For the purpose of an example, we directly return true.
-    return Future<bool>.value(true);
+  /// レシートチェックエラー等、課金失敗時処理
+  Future<void> _handleInvalidPurchase(PurchaseDetails purchaseDetails) async {
+    // TODO: 課金失敗ダイアログ等を表示する
   }
 
-  void _handleInvalidPurchase(PurchaseDetails purchaseDetails) {
-    // handle invalid purchase here if  _verifyPurchase` failed.
-  }
-
-  void _listenToPurchaseUpdated(List<PurchaseDetails> purchaseDetailsList) {
+  void _listenToPurchaseUpdated(
+      List<PurchaseDetails> purchaseDetailsList) async {
+    // 全てのTransactionについて処理します。
     purchaseDetailsList.forEach((PurchaseDetails purchaseDetails) async {
+      // 該当するProductをクリック後の分岐、毎回必ず通ります。
       if (purchaseDetails.status == PurchaseStatus.pending) {
-        showPendingUI();
+        // 購入ダイアログが表示された状態がpendingです。
+        await showPendingUI();
       } else {
+        // ダイアログ表示後にキャンセル、パスワード不一致などの場合
         if (purchaseDetails.status == PurchaseStatus.error) {
-          handleError(purchaseDetails.error);
-        } else if (purchaseDetails.status == PurchaseStatus.purchased) {
-          bool valid = await _verifyPurchase(purchaseDetails);
-          if (valid) {
-            deliverProduct(purchaseDetails);
-          } else {
-            _handleInvalidPurchase(purchaseDetails);
+          // TODO: ダイアログの表示など、Transactionがerrorのときのユーザへの通知
+        }
+        // 正常に購入された場合
+        else if (purchaseDetails.status == PurchaseStatus.purchased) {
+          // レシートの検証などは_verifyPurchase
+          // _verifyPurchaseの処理終了後、deliverProductが実行されます。
+          final bool valid = await _verifyPurchase(purchaseDetails);
+
+          if (!valid) {
+            // 7/15 - サーバー側のレシート検証に失敗した際は、確認ダイアログを表示し、Transactionは終了しません。
+            /// 課金終了状態のRedux保持は_handleInvalidPurchase で表示するダイアログの終了処理で実施しています。
+            await _handleInvalidPurchase(purchaseDetails);
             return;
           }
         }
         if (Platform.isAndroid) {
-          if (!kAutoConsume && purchaseDetails.productID == _kConsumableId) {
+          // 消費型アイテムの場合は、consumePurchase します
+          if (!kAutoConsume && null != purchaseDetails.productID) {
             await InAppPurchaseConnection.instance
                 .consumePurchase(purchaseDetails);
           }
         }
+        // 購入が正常に完了した場合の処理
         if (purchaseDetails.pendingCompletePurchase) {
-          await InAppPurchaseConnection.instance
-              .completePurchase(purchaseDetails);
+          try {
+            /// 一度に複数件の同じPIDのサブスクをcompletePurchaseしようとすると、2件目以降でExceptionとなります。
+            /// The transaction with transactionIdentifer:(null) does not exist. Note that if the transactionState is purchasing, the transactionIdentifier will be nil(null).
+            /// see）https://github.com/flutter/flutter/issues/57356
+            await InAppPurchaseConnection.instance
+                .completePurchase(purchaseDetails);
+            debugPrint(
+                '--- completePurchase ------- pid:${purchaseDetails.productID}, status:${purchaseDetails.status}');
+          } catch (e, stackTrace) {
+            debugPrint(
+                'completePurchase Error!, cause:${e.toString()}\n${stackTrace}');
+          }
         }
       }
     });
+  }
+
+  /// 課金アイテム購入処理
+  /// 消費型／サブスク共通
+  /// @param    productId   : 購入する課金アイテムプロダクトID文字列
+  void purchaseItem(String productId) async {
+    // TODO: 指定プロダクトIDの課金アイテム情報の取得
+    final productDetails =
+        _products.firstWhere((element) => element.id == productId);
+
+    if (null == productId) {
+      debugPrint('productDetails is null. Store account is not set...');
+    } else {
+      final purchaseParam = PurchaseParam(
+        productDetails: productDetails,
+        applicationUserName: null,
+        sandboxTesting: false,
+      );
+
+      /// 購入するアイテムの種別に応じて分岐
+      if (productId.contains('subscription')) {
+        try {
+          await _connection.buyNonConsumable(
+            purchaseParam: purchaseParam,
+          );
+        } catch (e, stackTrace) {
+          // 未完了トランザクションがあるアイテムの場合、iosのみExceptionが発生します。
+          debugPrint(
+              'buyNonConsumable Error! cause:${e.toString()}\n${stackTrace}');
+
+          // TODO: 未完了トランザクション時のエラーを表示するダイアログ
+        }
+      } else {
+        try {
+          await _connection.buyConsumable(
+            purchaseParam: purchaseParam,
+            autoConsume: kAutoConsume || Platform.isIOS,
+          );
+        } catch (e, stackTrace) {
+          // 未完了トランザクションがあるアイテムの場合、iosのみExceptionが発生します。
+          debugPrint(
+              'buyNonConsumable Error! cause:${e.toString()}\n${stackTrace}');
+
+          // TODO: 未完了トランザクション時のエラーを表示するダイアログ
+        }
+      }
+    }
+  }
+
+  /// Androidレシート取得、中断中課金処理再開処理
+  Future<void> pendingPurchaseCheck() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+
+    /// (1) 現在所持しているレシートを取得する
+    final purchaseResponse = await _connection.queryPastPurchases();
+    if (purchaseResponse.error != null) {
+      debugPrint('purchase response error');
+    } else if (purchaseResponse.pastPurchases.isEmpty) {
+      debugPrint('past purchase is empty');
+    } else {
+      // 全ての保持レシートについて確認
+      for (PurchaseDetails purchase in purchaseResponse.pastPurchases) {
+        debugPrint(
+            '--- queryPastPurchases product id: ${purchase.productID}, status:${purchase.status}');
+
+        // (2) サーバーへレシートチェックAPI送信
+        final result = await _verifyPurchase(purchase);
+        if (result) {
+          // (2-1) APIにてレシート検証に問題がなければ、completePurchase or consumePurchaseします
+          if (!kAutoConsume && purchase.productID.contains('consume')) {
+            // 消費型なら consumePurchase する
+            await InAppPurchaseConnection.instance.consumePurchase(purchase);
+            debugPrint(
+                '--- consumePurchase ------- product id: ${purchase.productID}, status:${purchase.status}');
+          }
+          // 課金Transactionの終了
+          try {
+            await InAppPurchaseConnection.instance.completePurchase(purchase);
+            debugPrint(
+                '--- completePurchase ------- product id: ${purchase.productID}, status:${purchase.status}');
+          } catch (e, stackTrace) {
+            debugPrint(
+                'completePurchase Error: ${e.toString()}\n${stackTrace}');
+          }
+        }
+      }
+    }
+  }
+
+  Future<QueryPurchaseDetailsResponse> getPastPurchase() async {
+    QueryPurchaseDetailsResponse purchaseResponse;
+    var counter = 0;
+
+    // レシートデータが存在している限り、ループで取得します
+    while (true) {
+      debugPrint('getPastPurchase called. counter:$counter');
+
+      // 購入履歴の取得
+      purchaseResponse = await _connection.queryPastPurchases();
+
+      // 結果が エラーまたは復旧すべきレシートがない場合は処理しません
+      if (purchaseResponse.error != null ||
+          purchaseResponse.pastPurchases.isEmpty) {
+        debugPrint('past purchase is empty or null');
+        break;
+      } else {
+        if (purchaseResponse.pastPurchases.isNotEmpty) {
+          // 現象として、ProductIDやStatusは正常に設定されているが、レシートデータがnullの状態が発生することがあります。
+          if (null !=
+              purchaseResponse
+                  .pastPurchases[0].verificationData.serverVerificationData) {
+            // レシートデータが非nullの場合（正常系）: リトライループ終了
+            debugPrint('Receipt data is available.');
+            break;
+          } else {
+            // レシートデータがnullの場合、上限を決めてリトライします。
+            counter++;
+            if (5 < counter) {
+              debugPrint('Receipt data is null');
+              return null;
+            }
+
+            // リトライするまでdelayさせます
+            debugPrint('Receipt data is null');
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
+        }
+      }
+    }
+    return purchaseResponse;
   }
 }
